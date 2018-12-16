@@ -1,1 +1,1 @@
-Code from Chapter 4 "Zrozumienie danych"
+Code from chapter 4 "Zrozumienie danych"

@@ -25,8 +25,8 @@ data['Embarked'] = data['Embarked'].astype('category')
 
 # Reordering Embarked
 data['Embarked'].cat.reorder_categories(
-    ["S","C","Q"], inplace=True)
-print(data['Embarked'].value_counts(sort = False))
+    ["S", "C", "Q"], inplace=True)
+print(data['Embarked'].value_counts(sort=False))
 
 # Descriptive statistics
 
@@ -56,8 +56,8 @@ print(data.Age.kurt())
 # Descriptive statistics - summary
 print(data.Age.describe())
 
-#Calculates the z score of each value
-print(st.zscore([0.45,23,25,28,33,60,80]))
+# Calculates the z score of each value
+print(st.zscore([0.45, 23, 25, 28, 33, 60, 80]))
 
 #  z score of a p-value and vice versa
 print(st.norm.cdf(3.46))
@@ -68,17 +68,21 @@ print(st.norm.cdf(1.64))
 sm.qqplot(data.Age, line='45')
 pylab.show()
 
+data_no_missing = data.dropna()
+stat, p = st.shapiro(data_no_missing.Age)
+print('Statistics=%.3f, p=%.3f' % (stat, p))
+alpha = 0.05
+if p > alpha:
+    print('Sample looks Gaussian (fail to reject H0)')
+else:
+    print('Sample does not look Gaussian (reject H0)')
+
 # Embarked crosstab
-print(pd.crosstab(index=data["Embarked"],  columns="Count"))
+print(pd.crosstab(index=data["Embarked"], columns="Count"))
 
 # Embarked barchart
 sns.countplot(x="Embarked", data=data);
 plt.show()
-
-# Two-way frequency tables
-survived_sex = pd.crosstab(index=data["Survived"],columns=data["Sex"])
-survived_sex.index= ["died","survived"]
-print(survived_sex)
 
 # Count of missing values
 print(data.Age.isnull().sum())
@@ -87,8 +91,9 @@ print(data.Age.isnull().sum())
 # Function that calculates the entropy
 def f_entropy(indata):
     indataprob = indata.value_counts() / len(indata)
-    entropy=sc.stats.entropy(indataprob, base = 2)
+    entropy = sc.stats.entropy(indataprob, base=2)
     return entropy
+
 
 # Use the function on variables
 print(np.log2(2), f_entropy(data.Survived), f_entropy(data.Survived) / np.log2(2))

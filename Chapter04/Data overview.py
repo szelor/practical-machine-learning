@@ -39,11 +39,11 @@ print(data.Embarked.mode())
 # Spread
 print(data.Age.min())
 print(data.Age.max())
-print(data.Age.max() - data.Age.min())
+print('Range=%.3f' % (data.Age.max() - data.Age.min()))
 
 print(data.Age.quantile(0.25))
 print(data.Age.quantile(0.75))
-print(data.Age.quantile(0.75) - data.Age.quantile(0.25))
+print('IQR=%.3f' % (data.Age.quantile(0.75) - data.Age.quantile(0.25)))
 
 print(data.Age.var())
 print(data.Age.std())
@@ -79,6 +79,7 @@ else:
 
 # Embarked crosstab
 print(pd.crosstab(index=data["Embarked"], columns="Count"))
+print(data.Embarked.isnull().sum())
 
 # Embarked barchart
 sns.countplot(x="Embarked", data=data);

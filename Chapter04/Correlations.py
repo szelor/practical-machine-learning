@@ -39,15 +39,31 @@ print(survived_sex)
 
 # Calculating Chi Square Independence Test
 chi2, p, dof, expected = chi2_contingency(pd.crosstab(data.Sex, data.Survived))
-print(chi2, p, dof, expected)
+print('Statistics=%.3f, p=%.100f, dof=%.3f' % (chi2, p , dof))
+alpha = 0.05
+if p > alpha:
+    print('Variables seems to be independent (fail to reject H0)')
+else:
+    print('Variables seems to be dependent (reject H0)')
+print(expected)
 
 # Calculating Spearman’s rank correlation
 coef, p = st.spearmanr(data.Survived, data.Pclass)
-print(coef, p)
+print('Statistics=%.3f, p=%.30f' % (coef, p))
+alpha = 0.05
+if p > alpha:
+    print('Variables seems to be independent (fail to reject H0)')
+else:
+    print('Variables seems to be dependent (reject H0)')
 
 # Calculating kendall's correlation
 coef, p = st.kendalltau(data.Survived, data.Pclass)
-print(coef, p)
+print('Statistics=%.3f, p=%.50f' % (coef, p))
+alpha = 0.05
+if p > alpha:
+    print('Variables seems to be independent (fail to reject H0)')
+else:
+    print('Variables seems to be dependent (reject H0)')
 
 # Calculating one-way ANOVA
 mod = ols('Age ~ Sex', data=data).fit()

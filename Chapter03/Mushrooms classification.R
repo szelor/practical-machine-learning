@@ -1,7 +1,7 @@
 library(dplyr)
-library(ggplot2)
 library(Kmisc)
 library(gridExtra)
+library(caret)
 
 url_file <-  "http://archive.ics.uci.edu/ml/machine-learning-databases/mushroom/agaricus-lepiota.data"
 mushrooms <- read.csv(url(url_file), header=FALSE)

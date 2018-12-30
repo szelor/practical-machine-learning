@@ -1,13 +1,13 @@
 import pandas
 import numpy as np
 
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC, LinearSVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn import model_selection
+from sklearn.model_selection import train_test_split
 
 
 train_df = pandas.read_csv('train.csv')
@@ -194,7 +194,7 @@ kfold = model_selection.KFold(n_splits=10, random_state=12)
 cv_decision_tree = DecisionTreeClassifier(criterion="gini", max_depth=8, min_samples_split=4)
 
 results = model_selection.cross_val_score(cv_decision_tree, X, Y, cv=kfold)
-print("Decision Tree accuracy: Final mean:%.3f%%, Final standard deviation:(%.3f%%)" % (results.mean()*100.0, results.std()*100.0))
+print("Decision Tree accuracy: Final mean:%.3f%%, Final standard deviation:(%.3f%%)" % (np.float32(results.mean())*100.0, results.std()*100.0))
 print('Decision Tree accuracies from each of the 10 folds using kfold:',results)
 
 #Predictions

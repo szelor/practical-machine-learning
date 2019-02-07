@@ -25,11 +25,204 @@ evaluateRegressor <- function(observed, predicted) {
 
 # Select variables
 
-train_table_name <- "PredictiveMaintenance.train_Features"
-test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-35
+train_table_name <- "PredictiveMaintenance.Train_Features"
+test_table_name <- "PredictiveMaintenance.Test_Features"
+
+train_table <- RxSqlServerData(table = train_table_name, 
+                               connectionString = connection_string)
+train_df <- rxImport(train_table)
+
+test_table <- RxSqlServerData(table = test_table_name,
+                              connectionString = connection_string)
+test_df <- rxImport(inData = test_table)
+
+# Find top n variables most correlated with RUL
+top_variables <- 20
+train_vars <- rxGetVarNames(train_df)
+train_vars <- train_vars[!train_vars  %in% c("label1", "label2", "id", "cycle_orig", "cycle")]
+formula <- NULL
+formula <- as.formula(paste("~", paste(train_vars, collapse = "+")))
+correlation <- rxCor(formula = formula, 
+                     data = train_df)
+correlation <- correlation[, "RUL"]
+correlation <- abs(correlation)
+correlation <- correlation[order(correlation, decreasing = TRUE)]
+correlation <- correlation[-1]
+as.data.frame(correlation)
+correlation <- correlation[1:top_variables]
+formula <- as.formula(paste(paste("RUL~"), paste(names(correlation), collapse = "+")))
+formula
+
+# Linear regression
+?MicrosoftML::rxFastLinear
+
+linear_model <- MicrosoftML::rxFastLinear(formula = formula,
+                                          data = train_df,
+                                          type = "regression",
+                                          lossFunction = squaredLoss(),
+                                          convergenceTolerance = 0.01,
+                                          shuffle = TRUE,
+                                          trainThreads = NULL,
+                                          normalize = "warn",
+                                          maxIterations = NULL,
+                                          l1Weight = NULL,
+                                          l2Weight = NULL)
+
+class(linear_model)
+summary(linear_model)
+
+linear_model_prediction <- rxPredict(modelObject = linear_model,
+                                     data = test_df,
+                                     #writeModelVars = TRUE,
+                                     extraVarsToWrite = "RUL")
+head(linear_model_prediction)
+
+linear_model_metrics <- evaluateRegressor (observed = linear_model_prediction$RUL, 
+                                            predicted = linear_model_prediction$Score)
+linear_model_metrics[c(1,2)]
+
+# GLM
+?RevoScaleR::rxGlm
+GLM_model <- RevoScaleR::rxGlm(formula = formula,
+                               data = train_df,
+                               family = gaussian)
+summary(GLM_model)
+as.data.frame(exp(coef(GLM_model)))
+GLM_model$deviance/GLM_model$df[2]
+
+GLM_prediction <- rxPredict(modelObject = GLM_model,
+                            data = test_df,
+                            predVarNames = "GLM_Prediction")
+
+GLM_model_metrics <<- evaluateRegressor(observed = test_df$RUL,
+                                        predicted = GLM_prediction$GLM_Prediction)
+GLM_model_metrics[c(1,2)]
+
+# Microsoft NNet
+?MicrosoftML::rxNeuralNet
+
+nn_model <- MicrosoftML::rxNeuralNet(formula, 
+                                     data = train_df, 
+                                     type = "regression",
+                                     normalize = "warn",
+                                     numHiddenNodes = 15,
+                                     numIterations = 100,
+                                     initWtsDiameter = 0.01,
+                                     acceleration = "gpu",
+                                     optimizer = sgd(learningRate = 0.01, momentum = 0.7, nag = TRUE,
+                                                     lRateRedRatio = 0.8, lRateRedFreq = 10)
+                                     )
+
+summary(nn_model)
+nn_model_prediction <- rxPredict(modelObject = nn_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "RUL")
+
+nn_model_metrics <- evaluateRegressor (observed = nn_model_prediction$RUL, 
+                                        predicted = nn_model_prediction$Score)
+nn_model_metrics[c(1,2)]
+
+nn_model_prediction <- rxPredict(modelObject = nn_model,
+                                 data = train_df,
+                                 extraVarsToWrite = "RUL")
+
+nn_model_metrics <- evaluateRegressor (observed = nn_model_prediction$RUL, 
+                                       predicted = nn_model_prediction$Score)
+nn_model_metrics[c(1,2)]
+
+nn_model <- MicrosoftML::rxNeuralNet(formula, 
+                                     data = train_df, 
+                                     type = "regression",
+                                     normalize = "auto",
+                                     numHiddenNodes = 15,
+                                     numIterations = 10,
+                                     initWtsDiameter = 0.005,
+                                     optimizer = adaDeltaSgd()
+                                     )
+
+summary(nn_model)
+nn_model_prediction <- rxPredict(modelObject = nn_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "RUL")
+
+nn_model_metrics <- evaluateRegressor (observed = nn_model_prediction$RUL, 
+                                       predicted = nn_model_prediction$Score)
+nn_model_metrics[c(1,2)]
+
+
+net_definition <- ("input Data auto;
+                   hidden Hidden1 [5] tanh from Data all;
+                   hidden Hidden2 [2] sigmoid from Hidden1 all;
+                   output Result auto from Hidden2 all;") 
+
+nn_model <- MicrosoftML::rxNeuralNet(formula, 
+                                     data = train_df, 
+                                     type = "regression",
+                                     normalize = "warn",
+                                     initWtsDiameter = 0.01,
+                                     netDefinition = net_definition,
+                                     numIterations = 10,
+                                     optimizer = adaDeltaSgd() )
+
+
+library(ggplot2)
+ggplot(data = train_df, aes(x = RUL)) +geom_freqpoly()
+
+#Regression tress
+library(rpart.plot)
+model <- rpart(formula, data=train_df)
+
+#Random forest
+?MicrosoftML::rxFastForest
+random_forest_model <- MicrosoftML::rxFastForest(formula, 
+                                                 data = train_df,
+                                                 type = "regression",
+                                                 numTrees = 20,
+                                                 numLeaves = 20,
+                                                 minSplit = 5,
+                                                 numBins = 20,
+                                                 exampleFraction = 0.7,
+                                                 featureFraction = 0.8,
+                                                 splitFraction = 0.7)
+summary(random_forest_model)
+rf_model_prediction <- rxPredict(modelObject = random_forest_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "RUL",
+                                 overwrite = TRUE)
+rf_model_metrics <- evaluateRegressor (observed = rf_model_prediction$RUL, 
+                                       predicted = rf_model_prediction$Score)
+
+rf_model_metrics[c(1,2)]
+
+#MART gradient boosting
+rpart.plot(model, box.palette = "GnBn", 
+           branch.lty = 2, shadow.col = "gray", nn = TRUE)
+
+?MicrosoftML::rxFastTrees
+gradient_boosting_forest_model <- MicrosoftML::rxFastTrees(formula, 
+                                                           data = train_df,
+                                                           type = "regression",
+                                                           numTrees = 20,
+                                                           numLeaves = 20,
+                                                           minSplit = 5,
+                                                           numBins = 20,
+                                                           exampleFraction = 0.7,
+                                                           featureFraction = 0.8,
+                                                           splitFraction = 0.8,
+                                                           learningRate = 0.1)
+summary(gradient_boosting_forest_model)
+gb_model_prediction <- rxPredict(modelObject = gradient_boosting_forest_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "RUL",
+                                 overwrite = TRUE)
+gb_model_metrics <- evaluateRegressor (observed = gb_model_prediction$RUL, 
+                                        predicted = gb_model_prediction$Score)
+gb_model_metrics[c(1,2)]
+
+
 
 model_factory <- function(train_table_name, test_table_name, top_variables) {
+  
   train_table <- RxSqlServerData(table = train_table_name, 
                                  connectionString = connection_string)
   train_df <- rxImport(train_table)
@@ -37,10 +230,9 @@ model_factory <- function(train_table_name, test_table_name, top_variables) {
   test_table <- RxSqlServerData(table = test_table_name,
                                 connectionString = connection_string)
   test_df <- rxImport(inData = test_table)
-  
-  # Find top n variables most correlated with RUL
   train_vars <- rxGetVarNames(train_df)
   train_vars <- train_vars[!train_vars  %in% c("label1", "label2", "id", "cycle_orig", "cycle")]
+  formula <- NULL
   formula <- as.formula(paste("~", paste(train_vars, collapse = "+")))
   correlation <- rxCor(formula = formula, 
                        data = train_df)
@@ -48,64 +240,56 @@ model_factory <- function(train_table_name, test_table_name, top_variables) {
   correlation <- abs(correlation)
   correlation <- correlation[order(correlation, decreasing = TRUE)]
   correlation <- correlation[-1]
-  as.data.frame(correlation)
   correlation <- correlation[1:top_variables]
   formula <- as.formula(paste(paste("RUL~"), paste(names(correlation), collapse = "+")))
-  #formula
   
   # Linear regression
-  #?MicrosoftML::rxFastLinear
   
   linear_model <- MicrosoftML::rxFastLinear(formula = formula,
                                             data = train_df,
-                                            lossFunction = squaredLoss(),
                                             type = "regression",
-                                            convergenceTolerance = 0.005,
-                                            #maxIterations = 50,
+                                            lossFunction = squaredLoss(),
+                                            convergenceTolerance = 0.01,
                                             shuffle = TRUE,
+                                            trainThreads = NULL,
                                             normalize = "warn",
+                                            maxIterations = NULL,
                                             l1Weight = NULL,
                                             l2Weight = NULL)
   
-  #summary(linear_model)
   linear_model_prediction <- rxPredict(modelObject = linear_model,
                                        data = test_df,
                                        extraVarsToWrite = "RUL",
                                        overwrite = TRUE)
-  head(linear_model_prediction)
   
   linear_model_metrics <<- evaluateRegressor (observed = linear_model_prediction$RUL, 
                                               predicted = linear_model_prediction$Score)
   
-  # Poisson regression
-  #?RevoScaleR::rxGlm
-  poisson_model <- RevoScaleR::rxGlm(formula = formula,
-                                     data = train_df,
-                                     family = poisson())
-  #summary(poisson_model)
-  poisson_prediction <- rxPredict(modelObject = poisson_model,
+  # GLM 
+  GLM_model <- RevoScaleR::rxGlm(formula = formula,
+                                 data = train_df,
+                                 family = gaussian)
+  
+  GLM_prediction <- rxPredict(modelObject = GLM_model,
                                   data = test_df,
-                                  predVarNames = "Poisson_Prediction",
+                                  predVarNames = "GLM_Prediction",
                                   overwrite = TRUE)
   
-  poisson_model_metrics <<- evaluateRegressor(observed = test_df$RUL,
-                                              predicted = poisson_prediction$Poisson_Prediction)
+  GLM_model_metrics <<- evaluateRegressor(observed = test_df$RUL,
+                                              predicted = GLM_prediction$GLM_Prediction)
   
   # Microsoft NNet
-  #?MicrosoftML::rxNeuralNet
   
   nn_model <- MicrosoftML::rxNeuralNet(formula, 
                                        data = train_df, 
                                        type = "regression",
                                        normalize = "warn",
+                                       numHiddenNodes = 20,
                                        numIterations = 100,
-                                       numHiddenNodes = 10,
-                                       optimizer = sgd(learningRate = 0.0001, momentum = 0.5, nag = FALSE, weightDecay = 0,
-                                                       lRateRedRatio = 0.9, lRateRedFreq = 50, lRateRedErrorRatio = 0),
-                                       initWtsDiameter = 0.8,
-                                       acceleration = "gpu")
+                                       initWtsDiameter = 0.01,
+                                       optimizer = sgd(learningRate = 0.02, momentum = 0.8, nag = TRUE,
+                                                       lRateRedRatio = 0.8, lRateRedFreq = 10) )
   
-  #summary(nn_model)
   nn_model_prediction <- rxPredict(modelObject = nn_model,
                                    data = test_df,
                                    extraVarsToWrite = "RUL",
@@ -118,10 +302,15 @@ model_factory <- function(train_table_name, test_table_name, top_variables) {
   gradient_boosting_forest_model <- MicrosoftML::rxFastTrees(formula, 
                                                              data = train_df,
                                                              type = "regression",
-                                                             numTrees = 50,
+                                                             numTrees = 20,
                                                              numLeaves = 20,
-                                                             learningRate = 0.2)
-  #summary(gradient_boosting_forest_model)
+                                                             minSplit = 5,
+                                                             numBins = 20,
+                                                             exampleFraction = 0.7,
+                                                             featureFraction = 0.8,
+                                                             splitFraction = 0.8,
+                                                             learningRate = 0.1)
+  
   gb_model_prediction <- rxPredict(modelObject = gradient_boosting_forest_model,
                                    data = test_df,
                                    extraVarsToWrite = "RUL",
@@ -133,19 +322,19 @@ model_factory <- function(train_table_name, test_table_name, top_variables) {
   random_forest_model <- MicrosoftML::rxFastForest(formula, 
                                                    data = train_df,
                                                    type = "regression",
-                                                   numTrees = 50,
+                                                   numTrees = 20,
                                                    numLeaves = 20,
-                                                   minSplit = 30)
-  #summary(random_forest_model)
+                                                   minSplit = 5,
+                                                   numBins = 20,
+                                                   exampleFraction = 0.7,
+                                                   featureFraction = 0.8,
+                                                   splitFraction = 0.7)
   rf_model_prediction <- rxPredict(modelObject = random_forest_model,
                                    data = test_df,
                                    extraVarsToWrite = "RUL",
                                    overwrite = TRUE)
   rf_model_metrics <<- evaluateRegressor (observed = rf_model_prediction$RUL, 
                                           predicted = rf_model_prediction$Score)
-  
-  
-  
 }
 
 
@@ -156,15 +345,20 @@ top_variables <- 20
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
-metrics_df <- rbind(linear_model_metrics, poisson_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxFastLinear on raw data",
+models <- c("rxFastLinear on raw data",
                 "rxGlm on raw data",
                 "rxNeuralNet on raw data",
                 "rxFastForest on raw data",
                 "rxFastTrees on raw data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
+
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Regression_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
@@ -175,18 +369,23 @@ rxDataStep(inData = metrics_df,
 # Train models on enchanced data
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-35
+top_variables <-10
 model_factory (train_table_name, test_table_name, top_variables)
 
-metrics_df <- rbind(linear_model_metrics, poisson_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxFastLinear on enchanced data",
+models <- c("rxFastLinear on enchanced data",
                 "rxGlm on enchanced data",
                 "rxNeuralNet on enchanced data",
                 "rxFastForest on enchanced data",
                 "rxFastTrees on enchanced data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
+
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Regression_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
@@ -197,18 +396,23 @@ rxDataStep(inData = metrics_df,
 # Train models on normalized data
 train_table_name <- "PredictiveMaintenance.train_Features_Normalized"
 test_table_name <- "PredictiveMaintenance.test_Features_Normalized"
-top_variables <-35
+top_variables <-30
 model_factory (train_table_name, test_table_name, top_variables)
 
-metrics_df <- rbind(linear_model_metrics, poisson_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxFastLinear on normalized data",
+models <- c("rxFastLinear on normalized data",
                 "rxGlm on normalized data",
                 "rxNeuralNet on normalized data",
                 "rxFastForest on normalized data",
                 "rxFastTrees on normalized data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
+
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Regression_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,

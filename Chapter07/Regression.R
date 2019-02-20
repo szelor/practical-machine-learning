@@ -219,7 +219,43 @@ gb_model_metrics <- evaluateRegressor (observed = gb_model_prediction$RUL,
                                         predicted = gb_model_prediction$Score)
 gb_model_metrics[c(1,2)]
 
+#Stacking
+?MicrosoftML::rxEnsemble
 
+ensemble_model <- rxEnsemble(
+  formula = formula,
+  data = train_df,
+  type = "regression",
+  trainers = list(
+    fastForest(numTrees = 20,
+             numLeaves = 20,
+             minSplit = 5,
+             numBins = 20,
+             exampleFraction = 0.7,
+             featureFraction = 0.8,
+             splitFraction = 0.7),
+    fastTrees(numTrees = 20,
+              numLeaves = 20,
+              minSplit = 5,
+              numBins = 20,
+              exampleFraction = 0.7,
+              featureFraction = 0.8,
+              splitFraction = 0.8,
+              learningRate = 0.1),
+    fastLinear(normalize = "auto")),
+  replace = TRUE,
+  combineMethod = "average")
+
+summary(ensemble_model)
+
+ensemble_model_prediction <- rxPredict(modelObject = ensemble_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "RUL",
+                                 overwrite = TRUE)
+ensemble_model_metrics <- evaluateRegressor (observed = ensemble_model_prediction$RUL, 
+                                       predicted = ensemble_model_prediction$Score)
+
+ensemble_model_metrics[c(1,2)]
 
 model_factory <- function(train_table_name, test_table_name, top_variables) {
   
@@ -335,24 +371,61 @@ model_factory <- function(train_table_name, test_table_name, top_variables) {
                                    overwrite = TRUE)
   rf_model_metrics <<- evaluateRegressor (observed = rf_model_prediction$RUL, 
                                           predicted = rf_model_prediction$Score)
+  
+  #Stacking
+  ensemble_model <- MicrosoftML::rxEnsemble(
+    formula = formula,
+    data = train_df,
+    type = "regression",
+    trainers = list(
+      fastForest(numTrees = 20,
+                 numLeaves = 20,
+                 minSplit = 5,
+                 numBins = 20,
+                 exampleFraction = 0.7,
+                 featureFraction = 0.8,
+                 splitFraction = 0.7),
+      fastTrees(numTrees = 20,
+                numLeaves = 20,
+                minSplit = 5,
+                numBins = 20,
+                exampleFraction = 0.7,
+                featureFraction = 0.8,
+                splitFraction = 0.8,
+                learningRate = 0.1),
+      fastLinear()),
+    replace = TRUE,
+    combineMethod = "average")
+  
+  summary(ensemble_model)
+  
+  ensemble_model_prediction <- rxPredict(modelObject = ensemble_model,
+                                         data = test_df,
+                                         extraVarsToWrite = "RUL",
+                                         overwrite = TRUE)
+  ensemble_model_metrics <<- evaluateRegressor (observed = ensemble_model_prediction$RUL, 
+                                               predicted = ensemble_model_prediction$Score)
+  
 }
 
 
 # Train models on raw data
 train_table_name <- "PredictiveMaintenance.train_Labels"
 test_table_name <- "PredictiveMaintenance.test_Labels"
-top_variables <- 20
+top_variables <- 10
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
-metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, 
+                    rf_model_metrics, gb_model_metrics, ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
 models <- c("rxFastLinear on raw data",
-                "rxGlm on raw data",
-                "rxNeuralNet on raw data",
-                "rxFastForest on raw data",
-                "rxFastTrees on raw data")
+            "rxGlm on raw data",
+            "rxNeuralNet on raw data",
+            "rxFastForest on raw data",
+            "rxFastTrees on raw data",
+            "rxEnsemble on raw data")
 models <- cbind(models, top_variables)
 metrics_df <- cbind(models, metrics_df)
 metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
@@ -361,6 +434,10 @@ colnames(metrics_df)[2] <- "Variables"
 
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Regression_metrics",
                                  connectionString = connection_string)
+#rxDataStep(inData = metrics_df,
+#           outFile = metrics_table,
+#           overwrite = TRUE)
+
 rxDataStep(inData = metrics_df,
            outFile = metrics_table,
            overwrite = FALSE,
@@ -369,17 +446,18 @@ rxDataStep(inData = metrics_df,
 # Train models on enchanced data
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-10
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
-metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics, ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
 models <- c("rxFastLinear on enchanced data",
-                "rxGlm on enchanced data",
-                "rxNeuralNet on enchanced data",
-                "rxFastForest on enchanced data",
-                "rxFastTrees on enchanced data")
+            "rxGlm on enchanced data",
+            "rxNeuralNet on enchanced data",
+            "rxFastForest on enchanced data",
+            "rxFastTrees on enchanced data",
+            "rxEnsemble on enchanced data")
 models <- cbind(models, top_variables)
 metrics_df <- cbind(models, metrics_df)
 metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
@@ -396,17 +474,18 @@ rxDataStep(inData = metrics_df,
 # Train models on normalized data
 train_table_name <- "PredictiveMaintenance.train_Features_Normalized"
 test_table_name <- "PredictiveMaintenance.test_Features_Normalized"
-top_variables <-30
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
-metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(linear_model_metrics, GLM_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics, ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
 models <- c("rxFastLinear on normalized data",
-                "rxGlm on normalized data",
-                "rxNeuralNet on normalized data",
-                "rxFastForest on normalized data",
-                "rxFastTrees on normalized data")
+            "rxGlm on normalized data",
+            "rxNeuralNet on normalized data",
+            "rxFastForest on normalized data",
+            "rxFastTrees on normalized data",
+            "rxEnsemble on normalized data")
 models <- cbind(models, top_variables)
 metrics_df <- cbind(models, metrics_df)
 metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))

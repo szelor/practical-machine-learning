@@ -80,7 +80,7 @@ roc <- function(data, observed, predicted) {
 # Select variables
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-40
+top_variables <-30
 
 train_table <- RxSqlServerData(table = train_table_name,
                                connectionString = connection_string,
@@ -134,8 +134,7 @@ head(logit_model_prediction[order(-logit_model_prediction$Probability.1),c(1,2,4
 logit_model_metrics <- evaluate_classifier(actual = "label1", 
                                            predicted = "PredictedLabel",
                                           data = logit_model_prediction)
-logit_model_metrics$Metrics[1]
-logit_model_metrics$Metrics[5]
+logit_model_metrics$Metrics[c(1,5)]
 
 roc_curve(data = logit_model_prediction,
           observed = "label1",
@@ -176,8 +175,7 @@ rxAuc(roc(data = nn_model_prediction,
 nn_model_prediction$newLabel1 <- ifelse(nn_model_prediction$Probability.1<=0.4, 0,1)
 nn_model_metrics <- evaluate_classifier(actual = "label1", predicted = "newLabel1",
                                         data = nn_model_prediction)
-nn_model_metrics$Metrics[1]
-nn_model_metrics$Metrics[5]
+nn_model_metrics$Metrics[c(1,5)]
 
 #Random forest
 ?rxFastForest
@@ -226,14 +224,57 @@ gb_model_prediction <- rxPredict(modelObject = gradient_boosting_model,
                                  extraVarsToWrite = "label1")
 gb_model_metrics <- evaluate_classifier(actual = "label1", predicted = "PredictedLabel",
                                          data = gb_model_prediction)
-gb_model_metrics$Metrics[1]
-gb_model_metrics$Metrics[5]
+gb_model_metrics$Metrics[c(1,5)]
 rxAuc(roc(data = gb_model_prediction,
           observed = "label1",
           predicted = "Probability.1"))
 
-InformationValue::plotROC(gb_model_prediction$label1, gb_model_prediction$Probability.1)
-InformationValue::AUROC(gb_model_prediction$label1, gb_model_prediction$Probability.1)
+#Stacking
+?MicrosoftML::rxEnsemble
+
+ensemble_model <- rxEnsemble(
+  formula = formula,
+  data = train_df,
+  type = "binary",
+  trainers = list(
+    logisticRegression(),
+    logisticRegression(l1Weight = 0.9,
+        l2Weight = 0.9,
+        normalize = "warn"),
+    fastTrees(numTrees = 20,
+              exampleFraction = 0.6,
+              featureFraction = 0.9,
+              learningRate = 0.01,
+              unbalancedSets = FALSE,
+              numLeaves = 10,
+              minSplit = 5,
+              splitFraction = 0.8),
+    fastForest(numTrees = 10,
+               numLeaves = 15,
+               exampleFraction = 0.6,
+               featureFraction = 0.7,
+               splitFraction = 0.6,
+               minSplit = 15)),
+  replace = TRUE,
+  modelCount = 8,
+  combineMethod = "average")
+
+summary(ensemble_model)
+
+ensemble_model_prediction <- rxPredict(modelObject = ensemble_model,
+                                       data = test_df,
+                                       extraVarsToWrite = "label1")
+
+ensemble_model_metrics <- evaluate_classifier(actual = "label1", 
+                                              predicted = "PredictedLabel",
+                                              data = ensemble_model_prediction)
+ensemble_model_metrics$Metrics[c(1,5)]
+
+InformationValue::plotROC(ensemble_model_prediction$label1, ensemble_model_prediction$Probability.1)
+InformationValue::AUROC(ensemble_model_prediction$label1, ensemble_model_prediction$Probability.1)
+rxAuc(roc(data = ensemble_model_prediction,
+          observed = "label1",
+          predicted = "Probability.1"))
 
 
 model_factory <- function(train_table_name, test_table_name, top_variables) {

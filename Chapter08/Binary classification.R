@@ -3,7 +3,6 @@ connection_string <- "Driver=SQL Server; Server=MS; Database=ML; Trusted_Connect
 local <- RxLocalParallel()
 rxSetComputeContext(local)
 
-# Classification models evaluation metrics
 evaluate_classifier <- function (actual, predicted, data, ...) {
   varInfo <- rxGetVarInfo(data)
   if (varInfo[[actual]]$varType != "factor") {
@@ -127,7 +126,7 @@ logit_model_prediction <- rxPredict(modelObject = logit_model,
                                     extraVarsToWrite = "label1")
 
 tail(logit_model_prediction)
-tail(e1071::sigmoid(logit_model_prediction$Score.1))
+as.data.frame(tail(e1071::sigmoid(logit_model_prediction$Score.1)))
 
 head(logit_model_prediction[order(-logit_model_prediction$Probability.1),c(1,2,4)])
 
@@ -387,45 +386,129 @@ gb_model_prediction <- rxPredict(modelObject = gradient_boosting_model,
 gb_model_metrics <<- evaluate_classifier(actual = "label1", predicted = "PredictedLabel",
                                          data = gb_model_prediction)
 
+ensemble_model <- MicrosoftML::rxEnsemble(
+  formula = formula,
+  data = train_df,
+  type = "binary",
+  trainers = list(
+    logisticRegression(),
+    logisticRegression(l1Weight = 0.9,
+                       l2Weight = 0.9,
+                       normalize = "warn"),
+    fastTrees(numTrees = 20,
+              exampleFraction = 0.6,
+              featureFraction = 0.9,
+              learningRate = 0.01,
+              unbalancedSets = FALSE,
+              numLeaves = 10,
+              minSplit = 5,
+              splitFraction = 0.8),
+    fastForest(numTrees = 10,
+               numLeaves = 15,
+               exampleFraction = 0.6,
+               featureFraction = 0.7,
+               splitFraction = 0.6,
+               minSplit = 15)),
+  replace = TRUE,
+  modelCount = 8,
+  combineMethod = "average")
+
+ensemble_model_prediction <- rxPredict(modelObject = ensemble_model,
+                                       data = test_df,
+                                       extraVarsToWrite = "label1")
+
+ensemble_model_metrics <<- evaluate_classifier(actual = "label1", 
+                                              predicted = "PredictedLabel",
+                                              data = ensemble_model_prediction)
+
 }
+
+# Classification models evaluation metrics
+evaluate_classifier <- function (actual, predicted, data, ...) {
+  varInfo <- rxGetVarInfo(data)
+  if (varInfo[[actual]]$varType != "factor") {
+    actual <- paste0("F(",actual,")")
+  }
+  if (varInfo[[predicted]]$varType != "factor") {
+    predicted <- paste0("F(",predicted,")")
+  }
+  myForm <- as.formula(paste("~",paste(actual,predicted, sep = ":")))
+  confusion <- rxCrossTabs(myForm,data = data, returnXtabs = TRUE, ...)
+  names(dimnames(confusion)) <- c("actual","predicted")
+  #print(confusion)
+  #print(prop.table(confusion))
+  tn <- confusion[1, 1]
+  fp <- confusion[1, 2]
+  fn <- confusion[2, 1]
+  tp <- confusion[2, 2]
+  #print(c(tp,fn,fp,tn))
+  accuracy <- (tp + tn) / (tp + fn + fp + tn)
+  precision <- tp / (tp + fp)
+  recall <- tp / (tp + fn)
+  fscore <- 2 * (precision * recall) / (precision + recall)
+  
+  metrics <- c("Accuracy" = accuracy,
+               "Precision" = precision,
+               "Recall" = recall,
+               "F-Score" = fscore)
+  return(metrics)
+}
+
 
 # Train models on raw data
 train_table_name <- "PredictiveMaintenance.train_Labels"
 test_table_name <- "PredictiveMaintenance.test_Labels"
-top_variables <-10
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
 
 # Combine metrics and write to SQL
-metrics_df <- rbind(logit_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(logit_model_metrics, nn_model_metrics, 
+                    rf_model_metrics, gb_model_metrics,ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on raw data",
+models <- c("rxLogisticRegression on raw data",
                 "rxNeuralNet on raw data",
                 "rxFastForest on raw data",
-                "rxFastTrees on raw data")
-metrics_df <- cbind(Algorithms, metrics_df)
+                "rxFastTrees on raw data",
+                "rxEnsemble on raw data")
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Binary_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
            outFile = metrics_table,
            overwrite = TRUE)
 
+rxDataStep(inData = metrics_df,
+           outFile = metrics_table,
+           overwrite = FALSE,
+           append = "rows")
+
 # Train models on enchanced data
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-30
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
-metrics_df <- rbind(logit_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(logit_model_metrics, nn_model_metrics, rf_model_metrics, 
+                    gb_model_metrics, ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on enchanced data",
+models <- c("rxLogisticRegression on enchanced data",
                 "rxNeuralNet on enchanced data",
                 "rxFastForest on enchanced data",
-                "rxFastTrees on enchanced data")
-metrics_df <- cbind(Algorithms, metrics_df)
+                "rxFastTrees on enchanced data",
+                "rxEnsemble on enchanced data")
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Binary_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
@@ -436,22 +519,29 @@ rxDataStep(inData = metrics_df,
 # Train models on normalized data
 train_table_name <- "PredictiveMaintenance.train_Features_Normalized"
 test_table_name <- "PredictiveMaintenance.test_Features_Normalized"
-top_variables <-30
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
 
 # Combine metrics and write to SQL
-metrics_df <- rbind(logit_model_metrics, nn_model_metrics, rf_model_metrics, gb_model_metrics)
+metrics_df <- rbind(logit_model_metrics, nn_model_metrics, rf_model_metrics,
+                    gb_model_metrics, ensemble_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on normalized data",
+models <- c("rxLogisticRegression on normalized data",
                 "rxNeuralNet on normalized data",
                 "rxFastForest on normalized data",
-                "rxFastTrees on normalized data")
-metrics_df <- cbind(Algorithms, metrics_df)
+                "rxFastTrees on normalized data",
+                "rxEnsemble on normalized data")
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "PredictiveMaintenance.Binary_metrics",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
            outFile = metrics_table,
            overwrite = FALSE,
            append = "rows")
+

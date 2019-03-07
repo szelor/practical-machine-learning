@@ -105,8 +105,8 @@ evaluate_classifier <- function(actual=NULL, predicted=NULL, cm=NULL){
 }
 
 # Select variables
-train_table_name <- "PredictiveMaintenance.train_Labels"
-test_table_name <- "PredictiveMaintenance.test_Labels"
+train_table_name <- "PredictiveMaintenance.train_Features"
+test_table_name <- "PredictiveMaintenance.test_Features"
 top_variables <- 20
 
 train_table <- RxSqlServerData(table = train_table_name,
@@ -136,6 +136,159 @@ correlation <- correlation[1:top_variables]
 formula <- as.formula(paste(paste("label2~"),
                             paste(names(correlation), collapse = "+")))
 formula
+
+# Logistic Regression - multiclass classification using L-BFGS
+logit_model <- MicrosoftML::rxLogisticRegression(formula = formula,
+                                                 data = train_df,
+                                                 type = "multiClass",
+                                                 l1Weight = 0.95,
+                                                 l2Weight = 0.95,
+                                                 optTol = 1e-05,
+                                                 normalize = "no")
+summary(logit_model)
+str(logit_model)
+
+logit_model$cachedSummary
+logit_model$cachedSummary$summary
+
+logit_model_prediction <- rxPredict(modelObject = logit_model,
+                                    data = test_df,
+                                    extraVarsToWrite = "label2")
+
+options(scipen = 999)
+tail(logit_model_prediction)
+round(rowSums(logit_model_prediction[,-c(1,2)]),3)
+
+
+logit_model_metrics <- evaluate_classifier(actual = logit_model_prediction$label2, 
+                                           logit_model_prediction$PredictedLabel)
+logit_model_metrics$Metrics[c(4,20),]
+
+# Neural networks 
+nn_model <- MicrosoftML::rxNeuralNet(formula, 
+                                     data = train_df, 
+                                     type = "multiClass",
+                                     normalize = "no",
+                                     numIterations = 5,
+                                     numHiddenNodes = 2,
+                                     optimizer = adaDeltaSgd(),
+                                     initWtsDiameter = 0.05,
+                                     maxNorm=2)
+
+summary(nn_model)
+nn_model_prediction <- rxPredict(modelObject = nn_model,
+                                 data = test_df,
+                                 extraVarsToWrite = "label2")
+
+nn_model_metrics <- evaluate_classifier(actual = nn_model_prediction$label2, 
+                                        predicted = nn_model_prediction$PredictedLabel)
+nn_model_metrics$Metrics[c(4,20),]
+
+nn_model_prediction <- rxPredict(modelObject = nn_model,
+                                 data = train_df,
+                                 extraVarsToWrite = "label2")
+
+nn_model_metrics <<- evaluate_classifier(actual = nn_model_prediction$label2, 
+                                         predicted = nn_model_prediction$PredictedLabel)
+nn_model_metrics$Metrics[c(4,20),]
+
+?RevoScaleR::rxDForest
+forest_model <- RevoScaleR::rxDForest(formula = formula,
+                                      data = train_df,
+                                      method = "class",
+                                      nTree = 20,
+                                      mTry = 10,
+                                      replace = TRUE,
+                                      strata = "label2",
+                                      seed = 5,
+                                      maxDepth = 10,
+                                      cp = 0.002,
+                                      minSplit = 15,
+                                      maxNumBins = 200,
+                                      findSplitsInParallel = TRUE)
+summary(forest_model)
+forest_model$ntree
+forest_model$oob.err
+forest_model$confusion
+
+forest_model_prediction <- rxPredict(modelObject = forest_model,
+                                     data = test_df,
+                                     extraVarsToWrite = "label2",
+                                     type = "prob")
+tail(forest_model_prediction)
+
+forest_model_metrics <- evaluate_classifier(actual = forest_model_prediction$label2, 
+                                            predicted = forest_model_prediction$label2_Pred)
+forest_model_metrics$Metrics[c(4,20),]
+
+# Boosted trees 
+?RevoScaleR::rxBTrees
+boosted_model <- RevoScaleR::rxBTrees(formula = formula,
+                                      data = train_df,
+                                      lossFunction = "multinomial",
+                                      learningRate = 0.05,
+                                      nTree = 25,
+                                      mTry = 10,
+                                      replace = FALSE,
+                                      sampRate = 0.632,
+                                      strata = "label2",
+                                      seed = 215,
+                                      cp = 0.01,
+                                      minSplit = 15,
+                                      minBucket = 8,
+                                      maxNumBins = 300)
+
+summary(boosted_model)
+boosted_model$forest
+boosted_model_prediction <- rxPredict(modelObject = boosted_model,
+                                      data = test_df,
+                                      extraVarsToWrite = "label2",
+                                      type = "prob")
+
+subset(boosted_model_prediction, label2!=0, 1:5)
+boosted_model_metrics <- evaluate_classifier(actual = boosted_model_prediction$label2, 
+                                             boosted_model_prediction$label2_Pred)
+boosted_model_metrics$Metrics[c(4,20),]
+
+
+# Classification models evaluation metrics
+evaluate_classifier <- function(actual, predicted) {
+  confusion <- table(actual, predicted)
+  num_classes <- nlevels(actual)
+  tp <- rep(0, num_classes)
+  fn <- rep(0, num_classes)
+  fp <- rep(0, num_classes)
+  tn <- rep(0, num_classes)
+  accuracy <- rep(0, num_classes)
+  precision <- rep(0, num_classes)
+  recall <- rep(0, num_classes)
+  f1 <- rep(0, num_classes)
+  for(i in 1:num_classes) {
+    tn[i] <- sum(confusion[i, i])
+    fn[i] <- sum(confusion[-i, i])
+    fp[i] <- sum(confusion[i, -i])
+    tp[i] <- sum(confusion[-i, -i])
+    accuracy[i] <- (tp[i] + tn[i]) / (tp[i] + fn[i] + fp[i] + tn[i])
+    precision[i] <- tp[i] / (tp[i] + fp[i])
+    recall[i] <- tp[i] / (tp[i] + fn[i])
+    f1[i] = 2 * precision[i] * recall[i] / (precision[i] + recall[i])
+  }
+  macroF1 = mean(f1)
+  overall_accuracy <- sum(tp) / sum(confusion)
+  average_accuracy <- sum(accuracy) / num_classes
+  micro_precision <- sum(tp) / (sum(tp) + sum(fp))
+  macro_precision <- sum(precision) / num_classes
+  micro_recall <- sum(tp) / (sum(tp) + sum(fn))
+  macro_recall <- sum(recall) / num_classes
+  metrics <- c("Overall accuracy" = overall_accuracy,
+               "Average accuracy" = average_accuracy,
+               "Micro-averaged Precision" = micro_precision,
+               "Macro-averaged Precision" = macro_precision,
+               "Micro-averaged Recall" = micro_recall,
+               "Macro-averaged Recall" = macro_recall,
+               "Macro-averaged F-1" = macroF1)
+  return(metrics)
+}
 
 
 model_factory <- function(train_table_name, test_table_name, top_variables) {
@@ -173,123 +326,137 @@ formula <- as.formula(paste(paste("label2~"),
 logit_model <- MicrosoftML::rxLogisticRegression(formula = formula,
                                                  data = train_df,
                                                  type = "multiClass",
-                                                 l1Weight = 1,
-                                                 l2Weight = 1,
-                                                 optTol = 1e-07,
-                                                 normalize = "warn")
-#summary(logit_model)
+                                                 l1Weight = 0.95,
+                                                 l2Weight = 0.95,
+                                                 optTol = 1e-05,
+                                                 normalize = "no")
 
 logit_model_prediction <- rxPredict(modelObject = logit_model,
                                     data = test_df,
                                     extraVarsToWrite = "label2",
                                     overwrite = TRUE)
-#head(logit_model_prediction)
 
-logit_model_metrics <<- evaluate_classifier(actual = logit_model_prediction$label2, logit_model_prediction$PredictedLabel)
-#logit_model_metrics
+logit_model_metrics <<- evaluate_classifier(actual = logit_model_prediction$label2, 
+                                            logit_model_prediction$PredictedLabel)
 
 # Neural networks 
 nn_model <- MicrosoftML::rxNeuralNet(formula, 
                                      data = train_df, 
                                      type = "multiClass",
-                                     normalize = "warn",
-                                     numIterations = 100,
-                                     numHiddenNodes = 10,
-                                     optimizer = sgd(learningRate = 0.0001, momentum = 0.4, nag = TRUE, weightDecay = 0,
-                                                     lRateRedRatio = 0.9, lRateRedFreq = 10, lRateRedErrorRatio = 0),
-                                     initWtsDiameter = 0.5,
-                                     acceleration = "gpu")
+                                     normalize = "no",
+                                     numIterations = 5,
+                                     numHiddenNodes = 2,
+                                     optimizer = adaDeltaSgd(),
+                                     initWtsDiameter = 0.05,
+                                     maxNorm=2)
 
-#summary(nn_model)
 nn_model_prediction <- rxPredict(modelObject = nn_model,
                                  data = test_df,
                                  extraVarsToWrite = "label2",
                                  overwrite = TRUE)
 
-nn_model_metrics <<- evaluate_classifier(actual = nn_model_prediction$label2, predicted = nn_model_prediction$PredictedLabel)
-#nn_model_metrics
+nn_model_metrics <<- evaluate_classifier(actual = nn_model_prediction$label2, 
+                                         predicted = nn_model_prediction$PredictedLabel)
 
-# Decision forest
-#?RevoScaleR::rxDForest
+# Random forest
 forest_model <- RevoScaleR::rxDForest(formula = formula,
-                          data = train_df,
-                          nTree = 5,
-                          maxDepth = 20,
-                          mTry = 10,
-                          maxNumBins = 150,
-                          minSplit = 30,
-                          seed = 5)
-#summary(forest_model)
+                                      data = train_df,
+                                      method = "class",
+                                      nTree = 20,
+                                      mTry = 10,
+                                      replace = TRUE,
+                                      strata = "label2",
+                                      seed = 5,
+                                      maxDepth = 10,
+                                      cp = 0.002,
+                                      minSplit = 15,
+                                      maxNumBins = 200,
+                                      findSplitsInParallel = TRUE)
+
 forest_model_prediction <- rxPredict(modelObject = forest_model,
                                     data = test_df,
                                     extraVarsToWrite = "label2",
                                     type = "prob",
                                     overwrite = TRUE)
-#head(forest_model_prediction)
 
-forest_model_metrics <<- evaluate_classifier(actual = forest_model_prediction$label2, predicted = forest_model_prediction$label2_Pred)
-#forest_model_metrics
+forest_model_metrics <<- evaluate_classifier(actual = forest_model_prediction$label2, 
+                                             predicted = forest_model_prediction$label2_Pred)
 
-# Boosted tree 
-#?RevoScaleR::rxBTrees
+# Boosted trees 
 boosted_model <- RevoScaleR::rxBTrees(formula = formula,
-                          data = train_df,
-                          learningRate = 0.2,
-                          minSplit = 30,
-                          minBucket = 10,
-                          nTree = 50,
-                          seed = 5,
-                          lossFunction = "multinomial")
+                                      data = train_df,
+                                      lossFunction = "multinomial",
+                                      learningRate = 0.05,
+                                      nTree = 25,
+                                      mTry = 10,
+                                      replace = FALSE,
+                                      sampRate = 0.632,
+                                      strata = "label2",
+                                      seed = 215,
+                                      cp = 0.01,
+                                      minSplit = 15,
+                                      minBucket = 8,
+                                      maxNumBins = 300)
 
-#summary(boosted_model)
-boosted_model_prediction <- rxPredict(modelObject = forest_model,
+boosted_model_prediction <- rxPredict(modelObject = boosted_model,
                           data = test_df,
                           extraVarsToWrite = "label2",
                           type = "prob",
                           overwrite = TRUE)
 
-#subset(boosted_model_prediction, label2!=0, 1:5)
-boosted_model_metrics <<- evaluate_classifier(actual = boosted_model_prediction$label2, boosted_model_prediction$label2_Pred)
-#boosted_model_metrics
+boosted_model_metrics <<- evaluate_classifier(actual = boosted_model_prediction$label2, 
+                                              boosted_model_prediction$label2_Pred)
 }
 
 # Train models on raw data
 train_table_name <- "PredictiveMaintenance.train_Labels"
 test_table_name <- "PredictiveMaintenance.test_Labels"
-top_variables <- 20
+top_variables <- 10
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
 metrics_df <- rbind(logit_model_metrics, nn_model_metrics, forest_model_metrics, boosted_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on raw data",
-                "rxNeuralNet on raw data",
-                "rxDForest on raw data",
-                "rxBTrees on raw data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- c("rxLogisticRegression on raw data",
+            "rxNeuralNet on raw data",
+            "rxDForest on raw data",
+            "rxBTrees on raw data")
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "[PredictiveMaintenance].[Multiclass_metrics]",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
            outFile = metrics_table,
            overwrite = TRUE)
 
+rxDataStep(inData = metrics_df,
+           outFile = metrics_table,
+           overwrite = FALSE,
+           append = "rows")
 
 # Train models on enchanced data
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-35
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
 metrics_df <- rbind(logit_model_metrics, nn_model_metrics, forest_model_metrics, boosted_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on enchanced data",
+models <- c("rxLogisticRegression on enchanced data",
                 "rxNeuralNet on enchanced data",
                 "rxDForest on enchanced data",
                 "rxBTrees on enchanced data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "[PredictiveMaintenance].[Multiclass_metrics]",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,
@@ -300,18 +467,22 @@ rxDataStep(inData = metrics_df,
 # Train models on normalized data
 train_table_name <- "PredictiveMaintenance.train_Features_Normalized"
 test_table_name <- "PredictiveMaintenance.test_Features_Normalized"
-top_variables <-35
+top_variables <-20
 model_factory (train_table_name, test_table_name, top_variables)
 
 # Combine metrics and write to SQL
 metrics_df <- rbind(logit_model_metrics, nn_model_metrics, forest_model_metrics, boosted_model_metrics)
 metrics_df <- as.data.frame(metrics_df)
 rownames(metrics_df) <- NULL
-Algorithms <- c("rxLogisticRegression on normalized data",
+models <- c("rxLogisticRegression on normalized data",
                 "rxNeuralNet on normalized data",
                 "rxDForest on normalized data",
                 "rxBTrees on normalized data")
-metrics_df <- cbind(Algorithms, metrics_df)
+models <- cbind(models, top_variables)
+metrics_df <- cbind(models, metrics_df)
+metrics_df$top_variables <- as.integer(trimws(metrics_df$top_variables))
+colnames(metrics_df)[1] <- "Name"
+colnames(metrics_df)[2] <- "Variables"
 metrics_table <- RxSqlServerData(table = "[PredictiveMaintenance].[Multiclass_metrics]",
                                  connectionString = connection_string)
 rxDataStep(inData = metrics_df,

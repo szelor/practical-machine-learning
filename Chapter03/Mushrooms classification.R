@@ -98,7 +98,7 @@ featurePlot(x=features, y=label, plot="density",scales=scales,
 ggplot(mushrooms, aes(x = cap_surface, y = ring_type, col = class, shape = class)) + 
   geom_jitter(alpha = 0.5) + 
   scale_color_manual(breaks = c("edible", "poisonous"), 
-                     values = c("green", "red"))
+                     values = c("black", "red"))
 
 #Chi-Square Test of Independence
 

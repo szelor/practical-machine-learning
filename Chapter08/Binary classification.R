@@ -79,7 +79,7 @@ roc <- function(data, observed, predicted) {
 # Select variables
 train_table_name <- "PredictiveMaintenance.train_Features"
 test_table_name <- "PredictiveMaintenance.test_Features"
-top_variables <-30
+top_variables <- 25
 
 train_table <- RxSqlServerData(table = train_table_name,
                                connectionString = connection_string,
@@ -91,19 +91,19 @@ test_table <- RxSqlServerData(table = test_table_name,
                               colInfo = list(label1 = list(type = "factor", levels = c("0", "1"))))
 test_df <- rxImport(test_table)
 
-# Find top n variables most correlated with label1
+# Find top n variables most correlated with label2
 train_vars <- rxGetVarNames(train_df)
-train_vars <- train_vars[!train_vars  %in% c("RUL", "label2", "id", "cycle_orig","cycle")]
+train_vars <- train_vars[!train_vars  %in% c("RUL", "label1", "id", "cycle_orig","cycle")]
 formula <- as.formula(paste("~", paste(train_vars, collapse = "+")))
 correlation <- rxCor(formula = formula, 
                      data = train_df,
                      transforms = list(label1 = as.numeric(label1)))
-correlation <- correlation[, "label1"]
+correlation <- correlation[, "label2"]
 correlation <- abs(correlation)
 correlation <- correlation[order(correlation, decreasing = TRUE)]
 correlation <- correlation[-1]
 correlation <- correlation[1:top_variables]
-formula <- as.formula(paste(paste("label1~"),
+formula <- as.formula(paste(paste("label2~"),
                             paste(names(correlation), collapse = "+")))
 formula
 
@@ -145,7 +145,7 @@ source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a5
 library(neuralnet)
 t <- train_df
 t$label1 <- as.numeric(t$label1)
-nn_model<-neuralnet(formula,data=t,hidden=5)
+nn_model<-neuralnet(formula,data=t,hidden=3)
 plot.nnet(nn_model)
 
 nn_model <- MicrosoftML::rxNeuralNet(formula, 
@@ -207,7 +207,7 @@ rxAuc(roc(data = rf_model_prediction,
 gradient_boosting_model <- MicrosoftML::rxFastTrees(formula, 
                            data = train_df,
                            type = "binary",
-                           numTrees = 20,
+                           numTrees = 15,
                            exampleFraction = 0.6,
                            featureFraction = 0.9,
                            learningRate = 0.01,
@@ -256,7 +256,7 @@ ensemble_model <- rxEnsemble(
                minSplit = 15)),
   replace = TRUE,
   modelCount = 8,
-  combineMethod = "average")
+  combineMethod = "vote")
 
 summary(ensemble_model)
 

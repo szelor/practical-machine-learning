@@ -77,6 +77,8 @@ rxDataStep(inData = truth_data_text,
 # Import train into data frame 
 train_table <- rxImport(train_data_table)
 
+?rxSummary
+
 rxGetInfo(data = train_table)
 rxGetInfo(data = train_table, getVarInfo = TRUE)
 rxGetInfo(data = train_table, getVarInfo = TRUE, numRows = 5)
@@ -153,8 +155,8 @@ train_table <- rxImport(tagged_table_train)
 
 dev.off()
 #install.packages("astsa")
-astsa::lag2.plot(train_table$RUL,train_table$s12,8)
 astsa::lag2.plot(train_table$s12,train_table$s12,5)
+astsa::lag2.plot(train_table$RUL,train_table$s12,8)
 
 par(mfrow=c(2,1))
 acf(train_table$s12, lag.max=30)

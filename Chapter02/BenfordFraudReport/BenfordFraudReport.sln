@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.27130.2026
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{F14B399A-7131-4C87-9E4B-1186C45EF12D}") = "BenfordFraudReport", "BenfordFraudReport.rptproj", "{908524D3-1B20-4501-8737-40D441CDD2F9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Default = Debug|Default
+		DebugLocal|Default = DebugLocal|Default
+		Release|Default = Release|Default
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Debug|Default.ActiveCfg = Debug
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Debug|Default.Build.0 = Debug
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Debug|Default.Deploy.0 = Debug
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.DebugLocal|Default.ActiveCfg = DebugLocal
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.DebugLocal|Default.Build.0 = DebugLocal
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Release|Default.ActiveCfg = Release
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Release|Default.Build.0 = Release
+		{908524D3-1B20-4501-8737-40D441CDD2F9}.Release|Default.Deploy.0 = Release
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {2EE0528B-A2B4-4ADB-98DF-753EF108113F}
+	EndGlobalSection
+EndGlobal

@@ -8,7 +8,7 @@ FROM [LendingClub].[LoanStatsStaging];
 GO
 
 SELECT loan_status, count(*) as cnt
-FROM [LendingClub].[LoanStatsStaging]
+FROM [LendingClub].[LoanStats]
 GROUP BY loan_status; 
 GO
 
